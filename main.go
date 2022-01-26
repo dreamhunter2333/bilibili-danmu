@@ -1,15 +1,16 @@
 package main
 
 import (
-	"encoding/json"
+	"context"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"math/rand"
-	"net/http"
 	"os"
+	"os/signal"
 	"time"
 
+	"github.com/gorilla/websocket"
+	live "github.com/iyear/biligo-live"
 	"github.com/urfave/cli/v2"
 )
 
@@ -38,84 +39,112 @@ func PrintColor(args ...interface{}) string {
 	return colors[rand.Intn(len(colors))](args...)
 }
 
-type DanmuRes struct {
-	Data DanmuData `json:"data"`
-}
-
-type DanmuData struct {
-	Room []DanmuItem `json:"room"`
-}
-
-type DanmuItem struct {
-	Text      string        `json:"text"`
-	Nickname  string        `json:"nickname"`
-	Timeline  string        `json:"timeline"`
-	CheckInfo CheckInfoItem `json:"check_info"`
-}
-
-type CheckInfoItem struct {
-	Time int64 `json:"ts"`
-}
-
 func main() {
-	var roomId string
-	var refreshInterval int
-	var lastRnd int64 = 0
+	var roomId int64
+	interrupt := make(chan os.Signal, 1)
+	signal.Notify(interrupt, os.Interrupt)
 
 	app := &cli.App{
 		Name:  "Bilibili Danmu",
 		Usage: "bilibili-danmu -r 00000",
 		Flags: []cli.Flag{
-			&cli.StringFlag{
+			&cli.Int64Flag{
 				Name:        "room-id",
 				Aliases:     []string{"r"},
 				Usage:       "Bilibili Room ID",
 				Destination: &roomId,
 			},
-			&cli.IntFlag{
-				Name:        "refresh",
-				Usage:       "refresh interval",
-				Value:       10,
-				Destination: &refreshInterval,
-			},
 		},
 		Action: func(c *cli.Context) error {
-			client := &http.Client{}
-			for {
-				// fmt.Printf("\x1bc")
-				req, err := http.NewRequest("GET", "https://api.live.bilibili.com/xlive/web-room/v1/dM/gethistory?roomid="+roomId, nil)
-				if err != nil {
-					return err
-				}
-				req.Header.Add("authority", "api.live.bilibili.com")
-				res, err := client.Do(req)
-				if err != nil {
-					return err
-				}
-				defer func() { _ = res.Body.Close() }()
-				body, err := ioutil.ReadAll(res.Body)
-				if err != nil {
-					return err
-				}
-				var result DanmuRes
-				err = json.Unmarshal(body, &result)
-				if err != nil {
-					return err
-				}
-				for _, danmuItem := range result.Data.Room {
-					if danmuItem.CheckInfo.Time > lastRnd {
-						fmt.Printf("%s %s: %s", danmuItem.Timeline, PrintColor(danmuItem.Nickname), PrintColor(danmuItem.Text))
-						fmt.Println()
-						lastRnd = danmuItem.CheckInfo.Time
-					}
-				}
-				time.Sleep(time.Duration(refreshInterval) * time.Second)
+			// 获取一个Live实例
+			// debug: debug模式，输出一些额外的信息
+			// heartbeat: 心跳包发送间隔。不发送心跳包，70 秒之后会断开连接，通常每 30 秒发送 1 次
+			// cache: Rev channel 的缓存
+			// recover: panic recover后的操作函数
+			l := live.NewLive(true, 30*time.Second, 0, func(err error) {
+				log.Fatal(err)
+			})
+
+			// 连接ws服务器
+			// dialer: ws dialer
+			// host: bilibili live ws host
+			if err := l.Conn(websocket.DefaultDialer, live.WsDefaultHost); err != nil {
+				log.Fatal(err)
+				return err
 			}
+
+			ctx, stop := context.WithCancel(context.Background())
+
+			go func() {
+				if err := l.Enter(ctx, roomId, "", 0); err != nil {
+					log.Fatal(err)
+					return
+				}
+			}()
+
+			go rev(ctx, l)
+
+			<-interrupt
+			fmt.Println("stoping")
+			// 关闭ws连接与相关协程
+			stop()
+			fmt.Println("stoped")
+			return nil
 		},
 	}
 
 	err := app.Run(os.Args)
 	if err != nil {
 		log.Fatal(err)
+	}
+}
+
+func rev(ctx context.Context, l *live.Live) {
+	for {
+		select {
+		case tp := <-l.Rev:
+			if tp.Error != nil {
+				log.Println(tp.Error)
+				continue
+			}
+			handle(tp.Msg)
+		case <-ctx.Done():
+			log.Println("rev func stopped")
+			return
+		}
+	}
+}
+
+func handle(msg live.Msg) {
+	// 使用 msg.(type) 进行事件跳转和处理，常见事件基本都完成了解析(Parse)功能，不常见的功能有一些实在太难抓取
+	// 更多注释和说明等待添加
+	switch msg.(type) {
+	// 心跳回应直播间人气值
+	case *live.MsgHeartbeatReply:
+		log.Printf("直播间人气值: %d\n", msg.(*live.MsgHeartbeatReply).GetHot())
+	// 弹幕消息
+	case *live.MsgDanmaku:
+		dm, err := msg.(*live.MsgDanmaku).Parse()
+		if err != nil {
+			log.Println(err)
+			return
+		}
+		fmt.Printf("%s %s: %s\n", time.Unix(dm.Time/1000, 0).Format("2006-01-02 15:04:05"), PrintColor(dm.Uname), PrintColor(dm.Content))
+	// 礼物消息
+	case *live.MsgSendGift:
+		g, err := msg.(*live.MsgSendGift).Parse()
+		if err != nil {
+			log.Println(err)
+			return
+		}
+		fmt.Printf("%s: %s %d个%s\n", g.Action, g.Uname, g.Num, g.GiftName)
+	// 直播间粉丝数变化消息
+	case *live.MsgFansUpdate:
+		f, err := msg.(*live.MsgFansUpdate).Parse()
+		if err != nil {
+			log.Println(err)
+			return
+		}
+		fmt.Printf("room: %d, fans: %d, fansClub: %d\n", f.RoomID, f.Fans, f.FansClub)
 	}
 }
