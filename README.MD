@@ -19,11 +19,11 @@ GLOBAL OPTIONS:
    --help, -h                 show help (default: false)
 ```
 
-## build on m1 mac
+## build
 
 ```bash
 CGO_ENABLED=0 GOOS=linux GOOS=windows go build -o out/bilibili-danmu.exe
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o out/bilibili-danmu-linux-amd64
 CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -o out/bilibili-danmu-macos-amd64
-go build -o out/bilibili-danmu-macos-arm64
+CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o out/bilibili-danmu-macos-arm64
 ```

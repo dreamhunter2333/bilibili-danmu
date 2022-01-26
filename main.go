@@ -129,7 +129,7 @@ func handle(msg live.Msg) {
 			log.Println(err)
 			return
 		}
-		fmt.Printf("%s %s: %s\n", time.Unix(dm.Time/1000, 0).Format("2006-01-02 15:04:05"), PrintColor(dm.Uname), PrintColor(dm.Content))
+		fmt.Printf("%s [%s]: %s\n", time.Unix(dm.Time/1000, 0).Format("2006-01-02 15:04:05"), PrintColor(dm.Uname), PrintColor(dm.Content))
 	// 礼物消息
 	case *live.MsgSendGift:
 		g, err := msg.(*live.MsgSendGift).Parse()
