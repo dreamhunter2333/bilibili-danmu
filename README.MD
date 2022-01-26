@@ -16,7 +16,6 @@ COMMANDS:
 
 GLOBAL OPTIONS:
    --room-id value, -r value  Bilibili Room ID
-   --refresh value            refresh interval (default: 10)
    --help, -h                 show help (default: false)
 ```
 
