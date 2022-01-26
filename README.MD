@@ -4,7 +4,13 @@ See your live broadcast room barrage at the terminal
 
 在终端查看你的哔哩哔哩直播弹幕
 
+## install
+
+```bash
+brew install jinmu333/dreamhunter/bilibili-danmu
 ```
+
+```bash
 NAME:
    Bilibili Danmu - bilibili-danmu -r 00000
 
